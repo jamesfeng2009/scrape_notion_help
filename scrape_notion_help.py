@@ -1,9 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import re
-import time
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -39,21 +37,23 @@ def get_all_links(base_url):
 def extract_core_content(page_content):
     soup = BeautifulSoup(page_content, 'html.parser')
     content = []
+    current_section = []
 
-    # 提取标题
-    title = soup.find('h1')
-    if title:
-        content.append(title.get_text(strip=True))
-
-    # 提取段落和注释
-    for paragraph in soup.find_all(['p', 'h2', 'h3', 'ul', 'ol']):
-        text = paragraph.get_text(strip=True)
+    # 提取标题和段落
+    for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
+        text = element.get_text(strip=True)
         if not re.search(
                 r'Company|Download|Resources|Notion for|AI|Docs|Wikis|Projects|Calendar|Sites|Templates|Product|Personal|Request a demo|Log in|Get Notion free|Help Center|Reference',
                 text):
-            content.append(text)
+            if element.name in ['h1', 'h2', 'h3'] and current_section:
+                content.append('\n'.join(current_section))
+                current_section = []
+            current_section.append(text)
 
-    return '\n'.join(content), title.get_text(strip=True) if title else "Untitled"
+    if current_section:
+        content.append('\n'.join(current_section))
+
+    return content
 
 
 # 将内容分割为较小部分，确保标题和相关段落保持在一起
@@ -62,10 +62,10 @@ def split_content(content, max_length=750):
     current_chunk = []
     current_length = 0
 
-    parts = content.split('\n')
     i = 0
-    while i < len(parts):
-        part = parts[i]
+    while i < len(content):
+        part = content[i]
+        # 确保标题和其后的段落保持在一起
         if current_length + len(part) + 1 > max_length and current_chunk:
             chunks.append('\n'.join(current_chunk))
             current_chunk = []
@@ -73,13 +73,6 @@ def split_content(content, max_length=750):
 
         current_chunk.append(part)
         current_length += len(part) + 1
-
-        # 确保标题和其后的段落保持在一起
-        if i < len(parts) - 1 and parts[i + 1].startswith(' '):
-            i += 1
-            part = parts[i]
-            current_chunk.append(part)
-            current_length += len(part) + 1
 
         i += 1
 
@@ -94,9 +87,10 @@ def scrape_and_save(link, output_directory):
     print(f"Scraping {link}")
     page_content = scrape_page(link)
     if page_content:
-        core_content, title = extract_core_content(page_content)
+        core_content = extract_core_content(page_content)
         split_core_content = split_content(core_content)
         # 使用标题作为文件名，去除不合法的文件名字符
+        title = core_content[0].split('\n')[0] if core_content else "Untitled"
         file_name = re.sub(r'[^a-zA-Z0-9-_ ]', '', title) + '.txt'
         file_path = os.path.join(output_directory, file_name)
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -116,6 +110,7 @@ def scrape_notion_help():
     with ThreadPoolExecutor(max_workers=10) as executor:
         for link in all_links:
             executor.submit(scrape_and_save, link, output_directory)
+    print("处理完毕!")
 
 
 if __name__ == "__main__":
