@@ -113,7 +113,7 @@ def scrape_notion_help():
         os.makedirs(output_directory)
 
     # 使用线程池来进行多线程抓取
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         for link in all_links:
             executor.submit(scrape_and_save, link, output_directory)
 
