@@ -4,16 +4,23 @@ import re
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+# 常量设置
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+EXCLUDE_PATTERNS = re.compile(
+    r'Company|Download|Resources|Notion for|AI|Docs|Wikis|Projects|Calendar|Sites|Templates|Product|Personal|Request a demo|Log in|Get Notion free|Help Center|Reference')
+OUTPUT_DIRECTORY = "/Users/fengyu/Downloads/myproject/workspace/crawlerLLM"
+BASE_URL = "https://www.notion.so/help"
+
 
 # 爬取网页内容的函数
 def scrape_page(url):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
         return response.text
-    else:
-        print(f"Failed to fetch {url}, status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"Failed to fetch {url}, error: {e}")
         return None
 
 
@@ -23,14 +30,14 @@ def get_all_links(base_url):
     if not page_content:
         return []
     soup = BeautifulSoup(page_content, 'html.parser')
-    links = []
-    for a_tag in soup.find_all('a', href=True):
-        href = a_tag['href']
-        if href.startswith('/help/') and 'notion-academy' not in href.lower() and 'guides' not in href.lower():
-            full_url = f"https://www.notion.so{href}"
-            if full_url not in links:
-                links.append(full_url)
-    return links
+    links = set(
+        f"https://www.notion.so{a_tag['href']}"
+        for a_tag in soup.find_all('a', href=True)
+        if
+        a_tag['href'].startswith('/help/') and 'notion-academy' not in a_tag['href'].lower() and 'guides' not in a_tag[
+            'href'].lower()
+    )
+    return list(links)
 
 
 # 从文章页面提取核心内容
@@ -39,12 +46,9 @@ def extract_core_content(page_content):
     content = []
     current_section = []
 
-    # 提取标题和段落
     for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
         text = element.get_text(strip=True)
-        if not re.search(
-                r'Company|Download|Resources|Notion for|AI|Docs|Wikis|Projects|Calendar|Sites|Templates|Product|Personal|Request a demo|Log in|Get Notion free|Help Center|Reference',
-                text):
+        if not EXCLUDE_PATTERNS.search(text):
             if element.name in ['h1', 'h2', 'h3'] and current_section:
                 content.append('\n'.join(current_section))
                 current_section = []
@@ -62,10 +66,7 @@ def split_content(content, max_length=750):
     current_chunk = []
     current_length = 0
 
-    i = 0
-    while i < len(content):
-        part = content[i]
-        # 确保标题和其后的段落保持在一起
+    for part in content:
         if current_length + len(part) + 1 > max_length and current_chunk:
             chunks.append('\n'.join(current_chunk))
             current_chunk = []
@@ -73,8 +74,6 @@ def split_content(content, max_length=750):
 
         current_chunk.append(part)
         current_length += len(part) + 1
-
-        i += 1
 
     if current_chunk:
         chunks.append('\n'.join(current_chunk))
@@ -89,28 +88,26 @@ def scrape_and_save(link, output_directory):
     if page_content:
         core_content = extract_core_content(page_content)
         split_core_content = split_content(core_content)
-        # 使用标题作为文件名，去除不合法的文件名字符
         title = core_content[0].split('\n')[0] if core_content else "Untitled"
-        file_name = re.sub(r'[^a-zA-Z0-9-_ ]', '', title) + '.txt'
+        file_name = re.sub(r'[^a-zA-Z0-9-_ ]', '', title)[:50] + '.txt'  # 限制文件名长度，避免过长
         file_path = os.path.join(output_directory, file_name)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(split_core_content)
+
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(split_core_content)
+        except OSError as e:
+            print(f"Failed to write to file {file_path}, error: {e}")
 
 
 # 主函数，抓取所有帮助文章
 def scrape_notion_help():
-    base_url = "https://www.notion.so/help"
-    all_links = get_all_links(base_url)
+    if not os.path.exists(OUTPUT_DIRECTORY):
+        os.makedirs(OUTPUT_DIRECTORY)
 
-    output_directory = "/Users/fengyu/Downloads/myproject/workspace/crawlerLLM"
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
+    all_links = get_all_links(BASE_URL)
 
-    # 使用线程池来进行多线程抓取
     with ThreadPoolExecutor(max_workers=10) as executor:
-        for link in all_links:
-            executor.submit(scrape_and_save, link, output_directory)
-    print("处理完毕!")
+        executor.map(lambda link: scrape_and_save(link, OUTPUT_DIRECTORY), all_links)
 
 
 if __name__ == "__main__":
