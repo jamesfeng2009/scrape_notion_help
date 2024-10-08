@@ -46,9 +46,11 @@ def extract_core_content(page_content):
     content = []
     current_section = []
 
-    for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
+    # 尝试提取所有相关标签的内容
+    for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'div', 'span']):
         text = element.get_text(strip=True)
         if not EXCLUDE_PATTERNS.search(text):
+            # 如果遇到标题，且当前段落不为空，则先保存当前段落
             if element.name in ['h1', 'h2', 'h3'] and current_section:
                 content.append('\n'.join(current_section))
                 current_section = []
@@ -87,6 +89,12 @@ def scrape_and_save(link, output_directory):
     page_content = scrape_page(link)
     if page_content:
         core_content = extract_core_content(page_content)
+
+        # 验证抓取是否完整
+        if len(core_content) == 0:
+            print(f"Warning: No content extracted from {link}")
+            return
+
         split_core_content = split_content(core_content)
         title = core_content[0].split('\n')[0] if core_content else "Untitled"
         file_name = re.sub(r'[^a-zA-Z0-9-_ ]', '', title)[:50] + '.txt'  # 限制文件名长度，避免过长
@@ -106,7 +114,7 @@ def scrape_notion_help():
 
     all_links = get_all_links(BASE_URL)
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         executor.map(lambda link: scrape_and_save(link, OUTPUT_DIRECTORY), all_links)
 
 
