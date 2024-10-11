@@ -1,114 +1,138 @@
+import os
+import re
 import requests
 from bs4 import BeautifulSoup
-import re
-import os
+from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor
 
-# 常量设置
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
-EXCLUDE_PATTERNS = re.compile(
-    r'Company|Download|Resources|Notion for|AI|Docs|Wikis|Projects|Calendar|Sites|Templates|Product|Personal|Request a demo|Log in|Get Notion free|Help Center|Reference')
-OUTPUT_DIRECTORY = "/Users/fengyu/Downloads/myproject/workspace/crawlerLLM"
-BASE_URL = "https://www.notion.so/help"
+# 定义要抓取的页面 URL 和保存文件的路径
+base_url = "https://www.notion.so/help"
+save_path = "/Users/fengyu/Downloads/myproject/workspace/crawlerLLM"
 
+# 创建保存文件的目录
+if not os.path.exists(save_path):
+    os.makedirs(save_path)
 
-# 爬取网页内容的函数
-def scrape_page(url):
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
+# 获取帮助中心的页面内容
+def get_page_content(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
         return response.text
-    except requests.RequestException as e:
-        print(f"Failed to fetch {url}, error: {e}")
+    else:
+        print(f"Failed to retrieve the page: {url}")
         return None
 
+# 从帮助中心主页获取所有文章链接
+def get_all_article_links(content):
+    soup = BeautifulSoup(content, "html.parser")
+    article_links = []
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        full_url = urljoin(base_url, href)
+        # 只保留 /help/ 路径下的链接，忽略 /help/guides 和 Notion Academy 的内容
+        if href.startswith("/help/") and not href.startswith("/help/guides") and not href.startswith("#"):
+            article_links.append(full_url)
+    # 打印所有抓取到的链接
+    print(f"All article links: {article_links}")
+    return list(set(article_links))
 
-# 解析帮助中心主页，获取所有文章链接
-def get_all_links(base_url):
-    page_content = scrape_page(base_url)
-    if not page_content:
-        return []
-    soup = BeautifulSoup(page_content, 'html.parser')
-    links = set(
-        f"https://www.notion.so{a_tag['href']}"
-        for a_tag in soup.find_all('a', href=True)
-        if
-        a_tag['href'].startswith('/help/') and 'notion-academy' not in a_tag['href'].lower() and 'guides' not in a_tag[
-            'href'].lower()
-    )
-    return list(links)
-
-
-# 从文章页面提取核心内容
-def extract_core_content(page_content):
-    soup = BeautifulSoup(page_content, 'html.parser')
-    content = []
-    current_section = []
-
-    for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
-        text = element.get_text(strip=True)
-        if not EXCLUDE_PATTERNS.search(text):
-            if element.name in ['h1', 'h2', 'h3'] and current_section:
-                content.append('\n'.join(current_section))
-                current_section = []
-            current_section.append(text)
-
-    if current_section:
-        content.append('\n'.join(current_section))
-
-    return content
-
-
-# 将内容分割为较小部分，确保标题和相关段落保持在一起
-def split_content(content, max_length=750):
+# 将文章分割为小片段，确保标题和段落保存在一起
+def split_article_text(article_text, max_length=750):
+    paragraphs = article_text.split("\n")
     chunks = []
-    current_chunk = []
-    current_length = 0
+    current_chunk = ""
 
-    for part in content:
-        if current_length + len(part) + 1 > max_length and current_chunk:
-            chunks.append('\n'.join(current_chunk))
-            current_chunk = []
-            current_length = 0
-
-        current_chunk.append(part)
-        current_length += len(part) + 1
+    for paragraph in paragraphs:
+        if len(current_chunk) + len(paragraph) > max_length:
+            # 确保当前片段按语义完整保存上下文
+            if len(paragraph) > max_length:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                chunks.append(paragraph.strip())
+                current_chunk = ""
+            else:
+                chunks.append(current_chunk.strip())
+                current_chunk = paragraph
+        else:
+            if current_chunk:
+                current_chunk += "\n" + paragraph
+            else:
+                current_chunk = paragraph
 
     if current_chunk:
-        chunks.append('\n'.join(current_chunk))
+        chunks.append(current_chunk.strip())
 
-    return '\n\n\n'.join(chunks)
+    return chunks
 
+# 提取每篇文章的标题和内容，并保存为 .txt 文件
+def save_article(link):
+    print(f"Processing: {link}")
+    content = get_page_content(link)
+    if content:
+        soup = BeautifulSoup(content, "html.parser")
+        title_tag = soup.find("title")
+        title = title_tag.text.strip() if title_tag else "untitled"
 
-# 多线程抓取网页内容并保存
-def scrape_and_save(link, output_directory):
-    print(f"Scraping {link}")
-    page_content = scrape_page(link)
-    if page_content:
-        core_content = extract_core_content(page_content)
-        split_core_content = split_content(core_content)
-        title = core_content[0].split('\n')[0] if core_content else "Untitled"
-        file_name = re.sub(r'[^a-zA-Z0-9-_ ]', '', title)[:50] + '.txt'  # 限制文件名长度，避免过长
-        file_path = os.path.join(output_directory, file_name)
+        article_body = soup.find("body")
 
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(split_core_content)
-        except OSError as e:
-            print(f"Failed to write to file {file_path}, error: {e}")
+        if article_body:
+            # 提取标题和内容组合在一起
+            sections = article_body.find_all(["h2", "p", "span"])
+            combined_sections = []
+            current_title = ""
+            current_content = ""
 
+            for section in sections:
+                if section.name == "h2" or (section.name == "span" and section.find_parent("h2")):
+                    # 保存之前的内容块
+                    if current_title or current_content:
+                        combined_sections.append(f"{current_title}\n{current_content}".strip())
+                    # 处理新的标题
+                    current_title = section.get_text(strip=True)
+                    current_content = ""
+                elif section.name == "p":
+                    current_content += section.get_text(strip=True) + "\n"
 
-# 主函数，抓取所有帮助文章
-def scrape_notion_help():
-    if not os.path.exists(OUTPUT_DIRECTORY):
-        os.makedirs(OUTPUT_DIRECTORY)
+            # 保存最后一个内容块
+            if current_title or current_content:
+                combined_sections.append(f"{current_title}\n{current_content}".strip())
 
-    all_links = get_all_links(BASE_URL)
+            article_text = "\n".join(combined_sections)
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        executor.map(lambda link: scrape_and_save(link, OUTPUT_DIRECTORY), all_links)
+            # 去掉文章开头和结尾的无关内容
+            EXCLUDE_PATTERNS = re.compile(
+                r'Company|Download|Resources|Notion for|AI|Docs|Wikis|Projects|Calendar|Sites|Templates|Product|Personal|Request a demo|Log in|Get Notion free|Help Center|Reference'
+            )
 
+            lines = article_text.splitlines()
+            cleaned_lines = [line for line in lines if not EXCLUDE_PATTERNS.search(line)]
+            article_text = "\n".join(cleaned_lines).strip()
+
+            # 分割文章为小片段，确保标题和段落保存在一起，允许片段长度超过750个字符以保留上下文
+            chunks = split_article_text(article_text)
+
+            # 保存每个片段为 .txt 文件
+            for idx, chunk in enumerate(chunks):
+                file_name = f"{title}_part_{idx + 1}.txt".replace("/", "-").replace("\\", "-").replace(":", "-")  # 替换不合法字符
+                file_path = os.path.join(save_path, file_name)
+                with open(file_path, "w", encoding="utf-8") as file:
+                    file.write(chunk)
+                print(f"Saved: {file_path}")
+        else:
+            print(f"No article content found for: {link}")
+
+# 主函数
+def main():
+    main_page_content = get_page_content(base_url)
+    if main_page_content:
+        article_links = get_all_article_links(main_page_content)
+        print(f"Found {len(article_links)} articles.")
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            executor.map(save_article, article_links)
 
 if __name__ == "__main__":
-    scrape_notion_help()
+    main()
