@@ -13,6 +13,7 @@ save_path = "/Users/fengyu/Downloads/myproject/workspace/crawlerLLM"
 if not os.path.exists(save_path):
     os.makedirs(save_path)
 
+
 # 获取帮助中心的页面内容
 def get_page_content(url):
     headers = {
@@ -24,6 +25,7 @@ def get_page_content(url):
     else:
         print(f"Failed to retrieve the page: {url}")
         return None
+
 
 # 从帮助中心主页获取所有文章链接
 def get_all_article_links(content):
@@ -38,6 +40,7 @@ def get_all_article_links(content):
     # 打印所有抓取到的链接
     print(f"All article links: {article_links}")
     return list(set(article_links))
+
 
 # 将文章分割为小片段，确保标题和段落保存在一起
 def split_article_text(article_text, max_length=750):
@@ -66,6 +69,7 @@ def split_article_text(article_text, max_length=750):
         chunks.append(current_chunk.strip())
 
     return chunks
+
 
 # 提取每篇文章的标题和内容，并保存为 .txt 文件
 def save_article(link):
@@ -116,13 +120,15 @@ def save_article(link):
 
             # 保存每个片段为 .txt 文件
             for idx, chunk in enumerate(chunks):
-                file_name = f"{title}_part_{idx + 1}.txt".replace("/", "-").replace("\\", "-").replace(":", "-")  # 替换不合法字符
+                file_name = f"{title}_part_{idx + 1}.txt".replace("/", "-").replace("\\", "-").replace(":",
+                                                                                                       "-")  # 替换不合法字符
                 file_path = os.path.join(save_path, file_name)
                 with open(file_path, "w", encoding="utf-8") as file:
                     file.write(chunk)
                 print(f"Saved: {file_path}")
         else:
             print(f"No article content found for: {link}")
+
 
 # 主函数
 def main():
@@ -133,6 +139,7 @@ def main():
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             executor.map(save_article, article_links)
+
 
 if __name__ == "__main__":
     main()
